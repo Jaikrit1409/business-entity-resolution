@@ -1,0 +1,13 @@
+pandas
+numpy
+scikit-learn
+rapidfuzz
+scipy
+matplotlib
+seaborn
+lightgbm
+jupyter
+sentence-transformers
+joblib
+tqdm
+duckdb

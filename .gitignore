@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Data — keep challenge datasets local
+data/
+
+# Generated outputs
+output/
+models/
+experiments/
+
+# Local patches / temporary files
+patch_*.py
+*.tmp
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
