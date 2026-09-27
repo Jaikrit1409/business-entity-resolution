@@ -1,4 +1,4 @@
-﻿"""Evaluate entity-resolution predictions against labeled pairs."""
+"""Evaluate entity-resolution predictions against labeled pairs."""
 from __future__ import annotations
 
 from collections import defaultdict
@@ -37,6 +37,7 @@ def macro_f0_5(
     if not source1_ids:
         return 0.0
 
+    unique_source1_ids = list(dict.fromkeys(source1_ids))
     true_by: dict[str, set[str]] = defaultdict(set)
     pred_by: dict[str, set[str]] = defaultdict(set)
 
@@ -47,7 +48,7 @@ def macro_f0_5(
 
     scores = []
 
-    for s1 in source1_ids:
+    for s1 in unique_source1_ids:
         truth = true_by[s1]
         pred = pred_by[s1]
 

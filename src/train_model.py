@@ -24,7 +24,7 @@ except ImportError:  # pragma: no cover - supports direct script execution
     from pair_generator import construct_labeled_pairs, split_source1_entities
 
 
-DEFAULT_THRESHOLDS = (0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90)
+DEFAULT_THRESHOLDS = tuple(round(0.05 + 0.01 * i, 2) for i in range(91))
 
 
 @dataclass(frozen=True)
@@ -69,6 +69,7 @@ def macro_f0_5(
     """Compute challenge-style macro F0.5, including singleton Source 1 entities."""
     if not source1_ids:
         return 0.0
+    unique_source1_ids = list(dict.fromkeys(source1_ids))
     true_by_source1: dict[str, set[str]] = defaultdict(set)
     predicted_by_source1: dict[str, set[str]] = defaultdict(set)
     for source1_id, candidate_id in true_pairs:
@@ -77,7 +78,7 @@ def macro_f0_5(
         predicted_by_source1[source1_id].add(candidate_id)
 
     scores: list[float] = []
-    for source1_id in source1_ids:
+    for source1_id in unique_source1_ids:
         truth, predicted = true_by_source1[source1_id], predicted_by_source1[source1_id]
         if not truth and not predicted:
             scores.append(1.0)
@@ -140,7 +141,8 @@ def _select_threshold(reports: Sequence[ThresholdMetrics]) -> ThresholdMetrics:
     if not reports:
         raise ValueError("At least one threshold is required")
     # Precision breaks an F0.5 tie; a higher threshold then favors safer merges.
-    return max(reports, key=lambda report: (report.macro_f0_5, report.pair_precision, report.threshold))
+    return max(reports, key=lambda report: (round(report.macro_f0_5, 7), round(report.pair_precision, 7), report.threshold))
+
 
 
 def train_baseline_model(
@@ -153,6 +155,7 @@ def train_baseline_model(
     random_seed: int = 42,
     thresholds: Sequence[float] = DEFAULT_THRESHOLDS,
     blocking_config: BlockingConfig | None = None,
+    scale_pos_weight: float | None = 1.0,
 ) -> BaselineTrainingResult:
     """Fit LightGBM on blocked training candidates and persist model/configuration.
 
@@ -192,7 +195,7 @@ def train_baseline_model(
         raise ValueError("Training candidates need at least one positive and one negative pair")
 
     positives, negatives = int(labels[train_mask].sum()), int((labels[train_mask] == 0).sum())
-    scale_pos_weight = negatives / positives if positives else 1.0
+    actual_scale_weight = scale_pos_weight if scale_pos_weight is not None else (negatives / positives if positives else 1.0)
     model = lgb.LGBMClassifier(
         objective="binary",
         n_estimators=300,
@@ -202,7 +205,7 @@ def train_baseline_model(
         subsample=0.9,
         colsample_bytree=0.9,
         reg_lambda=1.0,
-        scale_pos_weight=scale_pos_weight,
+        scale_pos_weight=actual_scale_weight,
         random_state=random_seed,
         n_jobs=1,
         verbosity=-1,
@@ -240,6 +243,7 @@ def train_baseline_model(
             "external_data": False,
         },
         "selected_threshold": selected.threshold,
+        "scale_pos_weight": actual_scale_weight,
         "train_source1_count": len(train_source1_ids),
         "validation_source1_count": len(validation_source1_ids),
         "train_pair_count": int(train_mask.sum()),
@@ -273,6 +277,7 @@ def train_large_model_from_tsv(
     thresholds: Sequence[float] = DEFAULT_THRESHOLDS,
     sample_per_source1: int = 50,
     chunk_size: int = 100_000,
+    scale_pos_weight: float | None = 1.0,
 ) -> BaselineTrainingResult:
     """Train LightGBM from large TSV datasets without materializing all pairs.
 
@@ -704,7 +709,7 @@ def train_large_model_from_tsv(
 
     positives = int(labels.sum())
     negatives = int((labels == 0).sum())
-    scale_pos_weight = negatives / positives if positives else 1.0
+    actual_scale_weight = scale_pos_weight if scale_pos_weight is not None else (negatives / positives if positives else 1.0)
 
     model = lgb.LGBMClassifier(
         objective="binary",
@@ -715,7 +720,7 @@ def train_large_model_from_tsv(
         subsample=0.9,
         colsample_bytree=0.9,
         reg_lambda=1.0,
-        scale_pos_weight=scale_pos_weight,
+        scale_pos_weight=actual_scale_weight,
         random_state=random_seed,
         n_jobs=1,
         verbosity=-1,

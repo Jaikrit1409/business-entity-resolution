@@ -1,4 +1,4 @@
-﻿"""Score blocked candidate record pairs using a trained LightGBM model."""
+"""Score blocked candidate record pairs using a trained LightGBM model."""
 from __future__ import annotations
 
 import json
@@ -30,23 +30,21 @@ def score_candidates(
     source3_records: Sequence[Mapping[str, Any]],
     model_path: str | Path,
     config_path: str | Path,
+    candidates: Any | None = None,
 ) -> tuple[Any, Any]:
-    """Generate candidates and return their feature matrix plus probabilities."""
+    """Generate or accept candidates and return their feature matrix plus probabilities."""
     config = load_model_config(config_path)
     model = load_model(model_path)
 
-    blocker = MultiStrategyBlocker(
-        config=config["blocking_config"]
-    ) if False else None
+    if candidates is None:
+        from .blocking import BlockingConfig
 
-    from .blocking import BlockingConfig
-
-    blocking_config = BlockingConfig(**config["blocking_config"])
-    candidates = MultiStrategyBlocker(blocking_config).generate(
-        source1_records,
-        source2_records,
-        source3_records,
-    )
+        blocking_config = BlockingConfig(**config["blocking_config"])
+        candidates = MultiStrategyBlocker(blocking_config).generate(
+            source1_records,
+            source2_records,
+            source3_records,
+        )
 
     matrix = build_feature_matrix(
         source1_records,
@@ -71,7 +69,7 @@ def select_matches(
     probabilities: Sequence[float],
     threshold: float,
 ) -> dict[str, list[str]]:
-    """Convert candidate probabilities into S1 -> matched IDs."""
+    """Convert candidate probabilities into S1 -> matched IDs with unique IDs preserved."""
     results: dict[str, list[str]] = {}
 
     for source1_id, candidate_id, probability in zip(
@@ -81,6 +79,9 @@ def select_matches(
         strict=True,
     ):
         if probability >= threshold:
-            results.setdefault(source1_id, []).append(candidate_id)
+            cand_list = results.setdefault(source1_id, [])
+            if candidate_id not in cand_list:
+                cand_list.append(candidate_id)
 
     return results
+

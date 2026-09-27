@@ -1,4 +1,4 @@
-﻿"""Scalable deterministic candidate generation for business entity resolution.
+"""Scalable deterministic candidate generation for business entity resolution.
 
 The blocker supports two modes:
 
@@ -104,6 +104,98 @@ def _entity_id(record: Mapping[str, Any]) -> str:
             "Every record used for blocking must have a non-empty entity_id"
         )
     return entity_id
+
+
+def ground_truth_pairs(
+    ground_truth_records: Sequence[Mapping[str, Any]],
+    source1_records: Sequence[Mapping[str, Any]] | None = None,
+    source2_records: Sequence[Mapping[str, Any]] | None = None,
+    source3_records: Sequence[Mapping[str, Any]] | None = None,
+) -> set[tuple[str, str]]:
+    """Extract set of (source1_id, candidate_id) true match pairs from ground truth."""
+    s1_valid = {_entity_id(r) for r in source1_records} if source1_records is not None else None
+    cand_valid = (
+        {_entity_id(r) for r in (source2_records or ())} | {_entity_id(r) for r in (source3_records or ())}
+        if (source2_records is not None or source3_records is not None)
+        else None
+    )
+
+    pairs: set[tuple[str, str]] = set()
+    for record in ground_truth_records:
+        s1 = _text(record.get("source1_entity_id") or record.get("entity_id"))
+        if not s1:
+            continue
+        if s1_valid is not None and s1 not in s1_valid:
+            continue
+        matched = _text(record.get("matched_entity_ids"))
+        if not matched:
+            continue
+        for candidate in matched.split(","):
+            candidate = candidate.strip()
+            if not candidate:
+                continue
+            if cand_valid is not None and candidate not in cand_valid:
+                continue
+            pairs.add((s1, candidate))
+    return pairs
+
+
+def final_candidate_rows(result: BlockingResult) -> list[dict[str, Any]]:
+    """Convert a BlockingResult into final candidate rows for downstream processing."""
+    combined = result.combined()
+    rows = []
+    for s1_id in sorted(combined):
+        rows.append({
+            "source1_entity_id": s1_id,
+            "candidate_entity_ids": combined[s1_id],
+        })
+    return rows
+
+
+def validate_blocking(
+    candidates: BlockingResult,
+    source1_records: Sequence[Mapping[str, Any]],
+    source2_records: Sequence[Mapping[str, Any]],
+    source3_records: Sequence[Mapping[str, Any]],
+    ground_truth_records: Sequence[Mapping[str, Any]],
+) -> BlockingValidation:
+    """Validate blocking quality against ground truth."""
+    true_pairs = ground_truth_pairs(
+        ground_truth_records, source1_records, source2_records, source3_records
+    )
+    combined = candidates.combined()
+    candidate_pairs = {
+        (s1, cand)
+        for s1, cands in combined.items()
+        for cand in cands
+    }
+    recovered = true_pairs & candidate_pairs
+    lost: dict[str, list[str]] = defaultdict(list)
+    for s1, cand in sorted(true_pairs - candidate_pairs):
+        lost[s1].append(cand)
+    lost_matches = {s1: tuple(cands) for s1, cands in lost.items()}
+
+    s1_count = len(source1_records)
+    candidate_counts = [len(combined.get(_entity_id(r), ())) for r in source1_records]
+    total_candidates = sum(candidate_counts)
+    total_possible = s1_count * (len(source2_records) + len(source3_records))
+
+    avg_cands = (total_candidates / s1_count) if s1_count else 0.0
+    med_cands = float(median(candidate_counts)) if candidate_counts else 0.0
+    max_cands = max(candidate_counts) if candidate_counts else 0
+    reduction = 1.0 - (total_candidates / total_possible) if total_possible else 0.0
+
+    return BlockingValidation(
+        true_match_recall=(len(recovered) / len(true_pairs)) if true_pairs else None,
+        true_match_count=len(true_pairs),
+        recovered_true_match_count=len(recovered),
+        average_candidates_per_source1=avg_cands,
+        median_candidates_per_source1=med_cands,
+        maximum_candidates_per_source1=max_cands,
+        candidate_reduction_ratio=reduction,
+        lost_true_matches=lost_matches,
+    )
+
 
 
 def _tokens(value: str, min_length: int) -> set[str]:
